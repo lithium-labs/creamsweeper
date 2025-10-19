@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Creamsweeper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* --- Base Styles --- */
+        :root {
+            --font-family: 'Press Start 2P', cursive;
+            --background-color: #1a1a1a;
+            --text-color: #e0e0e0;
+            --border-color: #444;
+            --panel-bg: #2a2a2a;
+            --punishment-bar-bg: #555;
+            --punishment-bar-fill: #ff4136;
+            --vanilla-bg: #c7b2a3;
+            --blueberry-bg: #497eb2;
+            --revealed-bg: #3c3c3c;
+            --flag-color: #ff851b;
+            --plaster-color: #39cccc;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            font-family: var(--font-family);
+            font-size: 14px;
+        }
+        
+        /* --- Game Layout --- */
+        #game-wrapper {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
+        }
+
+        #top-bar {
+            position: relative;
+            z-index: 10;
+        }
+        
+        #game-container {
+            flex-grow: 1;
+            position: relative;
+            cursor: grab;
+        }
+
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* --- Punishment Bar --- */
+        #punishment-container {
+            width: 100%;
+            background-color: var(--punishment-bar-bg);
+            padding: 4px;
+            box-sizing: border-box;
+            visibility: hidden;
+            height: 30px;
+        }
+        
+        #punishment-bar {
+            width: 100%;
+            height: 100%;
+            background-color: var(--punishment-bar-fill);
+            transition: width 0.1s linear;
+        }
+        
+        /* --- UI Panels --- */
+        .ui-panel {
+            position: absolute;
+            background-color: var(--panel-bg);
+            border: 4px solid var(--border-color);
+            padding: 15px;
+            z-index: 5;
+            user-select: none;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        
+        #inventory-panel {
+            bottom: 20px;
+            right: 20px;
+        }
+
+        #info-panel {
+            top: 20px;
+            left: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .ui-panel h2 {
+            margin-top: 0;
+            font-size: 1em;
+            text-align: center;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+        
+        #inventory-items {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .inventory-item {
+            font-size: 1.5em;
+        }
+        
+        .item-icon {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            line-height: 24px;
+            text-align: center;
+            background: var(--plaster-color);
+            color: white;
+        }
+        
+        /* --- Game Over Modal --- */
+        #game-over-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(26, 26, 26, 0.9);
+            border: 4px solid var(--punishment-bar-fill);
+            padding: 40px;
+            text-align: center;
+            z-index: 20;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        #game-over-modal h1 {
+            font-size: 2em;
+            color: var(--punishment-bar-fill);
+            margin: 0;
+        }
+
+        #punishment-text {
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-wrapper">
+        <div id="top-bar">
+            <div id="punishment-container">
+                <div id="punishment-bar"></div>
+            </div>
+        </div>
+        <div id="game-container">
+            <canvas id="game-canvas"></canvas>
+            
+            <div id="game-over-modal" class="ui-panel">
+                <h1>BOOM!</h1>
+                <p id="punishment-text">Game frozen for 30 seconds.</p>
+            </div>
+            
+            <div id="info-panel" class="ui-panel">
+                <p>Left Click: Reveal</p>
+                <p>Right Click: Flag</p>
+                <p>Drag: Pan Camera</p>
+                <p>Mouse Wheel: Zoom (cursor-centered)</p>
+            </div>
+
+            <div id="inventory-panel" class="ui-panel">
+                <h2>Inventory</h2>
+                <div id="inventory-items">
+                    <!-- Items will be populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function perlinNoise(x, y, seed) {
+            const scale = 0.1;
+            x = x * scale + seed;
+            y = y * scale + seed;
+
+            return (Math.sin(x*12.9898 + y*78.233) * 43758.5453 % 1 + 1) / 2;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- Persistence keys ---
+            const STORAGE_KEY_SEED = 'creamsweeper_seed';
+            const STORAGE_KEY_MOVES = 'creamsweeper_moves';
+            const STORAGE_KEY_INVENTORY = 'creamsweeper_inventory';
+            const STORAGE_KEY_LOCATION = 'creamsweeper_location';
+            const STORAGE_KEY_PUNISHMENT = 'creamsweeper_punishment';
+
+            // --- SESSION SEED (randomized per page load but preserved if stored) ---
+            let GLOBAL_SEED = (typeof crypto !== 'undefined' && crypto.getRandomValues) ?
+                crypto.getRandomValues(new Uint32Array(1))[0] :
+                Math.floor(Math.random() * 0xFFFFFFFF);
+
+            const storedSeed = localStorage.getItem(STORAGE_KEY_SEED);
+            if (storedSeed) {
+                GLOBAL_SEED = Number(storedSeed);
+                console.log('Loaded stored seed:', GLOBAL_SEED);
+            } else {
+                localStorage.setItem(STORAGE_KEY_SEED, GLOBAL_SEED.toString());
+                console.log('Generated new seed and saved:', GLOBAL_SEED);
+            }
+
+            const storedCamLocation = localStorage.getItem(STORAGE_KEY_LOCATION)
+            let [x, y] = [0, 0];
+
+            if (storedCamLocation) {
+                const [storedX, storedY] = storedCamLocation.split(",")
+                x = parseFloat(storedX)
+                y = parseFloat(storedY)
+            }
+
+            const punishmentStart = localStorage.getItem(STORAGE_KEY_PUNISHMENT) || 0;
+            const reduction = Date.now() - punishmentStart;
+            const punishmentData = { punish: reduction < 30000, reduction: reduction };
+
+            // saved moves format: array of entries { x, y, flagCount, revealed, usedPlaster, detonated }
+            let SAVED_MOVES_ENTRIES = [];
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY_MOVES);
+                if (raw) SAVED_MOVES_ENTRIES = JSON.parse(raw);
+            } catch (e) {
+                SAVED_MOVES_ENTRIES = [];
+            }
+
+            // restore inventory if present
+            let STORED_INVENTORY = null;
+            try {
+                const rawInv = localStorage.getItem(STORAGE_KEY_INVENTORY);
+                if (rawInv) STORED_INVENTORY = JSON.parse(rawInv);
+            } catch (e) {
+                STORED_INVENTORY = null;
+            }
+
+            console.log('Creamsweeper SEED:', GLOBAL_SEED);
+
+            // --- Seeded hashing / mixing function (deterministic given GLOBAL_SEED) ---
+            function seededHash(x, y) {
+                const xi = Math.floor(x * 1000) | 0;
+                const yi = Math.floor(y * 1000) | 0;
+                let n = (Math.imul(xi, 0x5bd1e995) ^ Math.imul(yi, 0x27d4eb2d) ^ (GLOBAL_SEED >>> 0)) >>> 0;
+                n = (n + 0x6D2B79F5) >>> 0;
+                n = Math.imul(n ^ (n >>> 15), 2246822507) >>> 0;
+                n = Math.imul(n ^ (n >>> 13), 3266489909) >>> 0;
+                n = (n ^ (n >>> 16)) >>> 0;
+                return (n >>> 0) / 4294967296;
+            }
+
+            // --- Game Configuration ---
+            const CONFIG = {
+                CELL_SIZE: 30,
+                CHUNK_SIZE: 16, // In cells
+                MINE_DENSITY: 0.18,
+                PUNISHMENT_TIME: 30000, // 30 seconds in ms
+                ITEM_SPAWN_CHANCE: 0.005, // 0.5% chance per cell
+            };
+            
+            // --- Number Colors ---
+            const NUMBER_COLORS = {
+                1: '#57bdf3',
+                2: '#5def51',
+                3: '#fc5252',
+                4: '#4c7630',
+                5: '#821f1e',
+                6: '#118e8f',
+                7: '#3a3a3a',
+                8: '#717171',
+                9: '#5a63d3',
+                10: '#4f2737',
+                11: '#505637',
+                12: '#72af98',
+            };
+
+            // flag colors for 1/2/3
+            const FLAG_COLORS = {
+                1: '#ffd24d', // yellow-ish
+                2: getComputedStyle(document.documentElement).getPropertyValue('--flag-color') || '#ff851b',
+                3: '#ff4136', // red-ish for critical
+            };
+
+            // --- Biome Definitions ---
+            const BIOMES = {
+                vanilla: {
+                    name: 'Vanilla',
+                    backgroundColor: '#c7b2a3',
+                    hiddenColor: '#d1c0b4',
+                    getMineCount: (x, y) => (seededHash(x, y) < CONFIG.MINE_DENSITY ? 1 : 0),
+                    flagCount: 1
+                },
+                blueberry: {
+                    name: 'Blueberry',
+                    backgroundColor: '#497eb2',
+                    hiddenColor: '#6a97c3',
+                    getMineCount: (x, y) => {
+                        const noise = perlinNoise(x, y, GLOBAL_SEED);
+                        const threshold = CONFIG.MINE_DENSITY * 4.5; // Magic number
+                        const upperUnit = (1 - threshold) / 3;
+                        if (noise <= threshold) {
+                            return 0;
+                        }
+
+                        return Math.round((1 - noise) / upperUnit);
+                    },
+                    flagCount: 3
+                },
+            };
+
+            // --- Game Class ---
+            class Game {
+                constructor(canvas, savedMovesEntries = [], storedInventory = null, camera = [0, 0], punishmentData) {
+                    this.canvas = canvas;
+                    this.ctx = canvas.getContext('2d');
+
+                    // DOM elements
+                    this.punishmentContainer = document.getElementById('punishment-container');
+                    this.punishmentBar = document.getElementById('punishment-bar');
+                    this.gameOverModal = document.getElementById('game-over-modal');
+                    this.inventoryContainer = document.getElementById('inventory-items');
+
+                    // movesMap stores final state per cell (optimized)
+                    // key -> { x, y, flagCount, revealed, usedPlaster, detonated }
+                    this.movesMap = new Map();
+
+                    // provide saved entries for loading after init
+                    this.savedMovesEntries = savedMovesEntries || [];
+                    this.storedInventory = storedInventory;
+                    this.cam = camera;
+                    this.punishmentData = punishmentData;
+
+                    // Zoom & camera
+                    this.scale = 1; // 1 = 100%
+                    this.minScale = 0.5;
+                    this.maxScale = 3;
+
+                    this.initialize();
+                }
+
+                initialize() {
+                    // Game state
+                    this.grid = new Map();
+                    this.isPunished = false;
+                    this.punishmentEndTime = 0;
+
+                    // default inventory; will be overwritten by storedInventory if present
+                    this.inventory = {
+                        bombPlaster: 1,
+                    };
+                    if (this.storedInventory && typeof this.storedInventory === 'object') {
+                        this.inventory = Object.assign(this.inventory, this.storedInventory);
+                    }
+
+                    // Camera & Input
+                    const [x, y] = this.cam;
+                    this.camera = { x: x, y: y };
+                    this.isDragging = false;
+                    this.lastMousePos = { x: x, y: y };
+                    this.dragStartPos = { x: x, y: y };
+
+                    this.resizeCanvas();
+                    this.setupEventListeners();
+                    this.updateInventoryUI();
+
+                    // apply saved moves (without triggering punishment)
+                    this.applySavedMoves(this.savedMovesEntries);
+                    if (this.punishmentData && this.punishmentData.punish) {
+                        this.triggerPunishment(this.punishmentData.reduction);
+                    }
+
+                    this.gameLoop();
+                }
+
+                setupEventListeners() {
+                    window.addEventListener('resize', () => this.resizeCanvas());
+                    this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
+                    this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
+                    this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
+                    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+                    this.canvas.addEventListener('mouseleave', () => this.isDragging = false);
+
+                    // Wheel for zooming (cursor-centered)
+                    this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+                }
+
+                resizeCanvas() {
+                    const dpr = window.devicePixelRatio || 1;
+                    const rect = this.canvas.getBoundingClientRect();
+                    this.canvas.width = rect.width * dpr;
+                    this.canvas.height = rect.height * dpr;
+                    // don't set transform here; we'll set a full transform each draw to include camera & scale
+                    this.ctx.imageSmoothingEnabled = false;
+                }
+
+                onMouseDown(e) {
+                    if (this.isPunished) return;
+                    if (e.button === 0 || e.button === 1) {
+                        this.isDragging = true;
+                        this.lastMousePos = { x: e.clientX, y: e.clientY };
+                        this.dragStartPos = { x: e.clientX, y: e.clientY };
+                        this.canvas.style.cursor = 'grabbing';
+                    }
+                }
+
+                onMouseUp(e) {
+                    if (this.isPunished) return;
+
+                    let movedDistance = Math.hypot(e.clientX - this.dragStartPos.x, e.clientY - this.dragStartPos.y);
+
+                    if (e.button === 2) {
+                        const worldPos = this.screenToWorld(e.clientX, e.clientY);
+                        const cellCoords = {
+                            x: Math.floor(worldPos.x / CONFIG.CELL_SIZE),
+                            y: Math.floor(worldPos.y / CONFIG.CELL_SIZE),
+                        };
+
+                        this.flagCell(cellCoords.x, cellCoords.y);
+                        movedDistance = 5;
+                    }
+
+                    if (movedDistance < 5) {
+                        const worldPos = this.screenToWorld(e.clientX, e.clientY);
+                        const cellCoords = {
+                            x: Math.floor(worldPos.x / CONFIG.CELL_SIZE),
+                            y: Math.floor(worldPos.y / CONFIG.CELL_SIZE),
+                        };
+
+                        if (e.button === 2) {
+                            this.flagCell(cellCoords.x, cellCoords.y);
+                        } else if (e.button === 0) {
+                            const cell = this.getCell(cellCoords.x, cellCoords.y, true);
+                            if (cell.isRevealed && cell.adjacentMines > 0) {
+                                this.performChord(cellCoords.x, cellCoords.y);
+                            } else {
+                                this.revealCell(cellCoords.x, cellCoords.y);
+                            }
+                        }
+                    } else {
+                        // store camera location after a pan
+                        localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y}`)
+                    }
+
+                    this.isDragging = false;
+                    this.canvas.style.cursor = 'grab';
+                }
+
+                onMouseMove(e) {
+                    if (this.isPunished || !this.isDragging) return;
+                    const dx = e.clientX - this.lastMousePos.x;
+                    const dy = e.clientY - this.lastMousePos.y;
+                    // convert screen movement to world movement (account for scale)
+                    this.camera.x -= dx / this.scale;
+                    this.camera.y -= dy / this.scale;
+                    this.lastMousePos = { x: e.clientX, y: e.clientY };
+                }
+
+                onWheel(e) {
+                    e.preventDefault();
+                    // zoom centered on cursor
+                    const rect = this.canvas.getBoundingClientRect();
+                    const screenX = e.clientX - rect.left;
+                    const screenY = e.clientY - rect.top;
+
+                    const worldBefore = this.screenToWorld(e.clientX, e.clientY);
+
+                    // choose zoom factor (feel free to tweak)
+                    const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88; // zoom in when wheel up
+                    let newScale = this.scale * zoomFactor;
+                    newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+
+                    // set new scale
+                    this.scale = newScale;
+
+                    // adjust camera so the world point under the cursor stays fixed
+                    this.camera.x = worldBefore.x - (screenX / this.scale);
+                    this.camera.y = worldBefore.y - (screenY / this.scale);
+
+                    // persist camera
+                    localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y}`)
+                }
+
+                screenToWorld(sx, sy) {
+                    const rect = this.canvas.getBoundingClientRect();
+                    return {
+                        x: (sx - rect.left) / this.scale + this.camera.x,
+                        y: (sy - rect.top) / this.scale + this.camera.y,
+                    };
+                }
+
+                // --- Moves persistence helpers ---
+                _moveKey(x, y) { return `${x},${y}`; }
+
+                saveState() {
+                    // build array of entries from movesMap
+                    const arr = [];
+                    this.movesMap.forEach((val, key) => {
+                        // Only persist non-default cell data
+                        const entry = {
+                            x: val.x,
+                            y: val.y,
+                            flagCount: val.flagCount || 0,
+                            revealed: !!val.revealed,
+                            usedPlaster: !!val.usedPlaster,
+                            detonated: !!val.detonated
+                        };
+                        // Only keep entries which are meaningful
+                        if (entry.flagCount !== 0 || entry.revealed || entry.usedPlaster || entry.detonated) {
+                            arr.push(entry);
+                        }
+                    });
+                    localStorage.setItem(STORAGE_KEY_MOVES, JSON.stringify(arr));
+                    localStorage.setItem(STORAGE_KEY_SEED, GLOBAL_SEED.toString());
+                    localStorage.setItem(STORAGE_KEY_INVENTORY, JSON.stringify(this.inventory));
+                }
+
+                applySavedMoves(entries = []) {
+                    if (!Array.isArray(entries)) return;
+                    let usedPlasterCount = 0;
+                    entries.forEach(e => {
+                        const x = e.x, y = e.y;
+                        const cell = this.getCell(x, y, true);
+                        // apply flags
+                        cell.flagCount = e.flagCount || 0;
+                        // update movesMap final state
+                        const key = this._moveKey(x, y);
+                        this.movesMap.set(key, {
+                            x, y,
+                            flagCount: cell.flagCount || 0,
+                            revealed: !!e.revealed,
+                            usedPlaster: !!e.usedPlaster,
+                            detonated: !!e.detonated
+                        });
+
+                        // apply reveal states silently (no punishment)
+                        if (e.revealed) {
+                            cell.isRevealed = true;
+                            cell.adjacentMines = this.calculateAdjacentMines(x, y);
+                        }
+                        if (e.usedPlaster) {
+                            cell.usedPlaster = true;
+                            usedPlasterCount++;
+                        }
+                        if (e.detonated) {
+                            cell.detonated = true;
+                            cell.isRevealed = true;
+                        }
+                    });
+
+                    // apply inventory from storage if present (we already read saved inventory into storedInventory earlier)
+                    // saved inventory takes precedence over usedPlaster adjustment
+                    if (!this.storedInventory && usedPlasterCount > 0) {
+                        // reduce default bombPlaster by usedPlasterCount (don't go negative)
+                        this.inventory.bombPlaster = Math.max(0, (this.inventory.bombPlaster || 0) - usedPlasterCount);
+                    }
+
+                    // ensure UI updates
+                    this.updateInventoryUI();
+                    // Save optimized state back (clean up)
+                    this.saveState();
+                }
+
+                // --- Core cell generation / logic ---
+                getCell(x, y, generate = false) {
+                    const key = `${x},${y}`;
+                    let cell = this.grid.get(key);
+                    if (!cell && generate) {
+                        cell = this.generateCell(x, y);
+                        this.grid.set(key, cell);
+                    }
+                    return cell;
+                }
+
+                generateCell(x, y) {
+                    const biome = this.getBiomeForCell(x, y);
+                    const mineCount = biome.getMineCount(x, y);
+                    let item = null;
+                    if (mineCount === 0 && seededHash(x + 0.5, y - 0.5) < CONFIG.ITEM_SPAWN_CHANCE) {
+                        item = 'bombPlaster';
+                    }
+                    return {
+                        x, y,
+                        isMine: mineCount > 0,
+                        mineCount,
+                        isRevealed: false,
+                        flagCount: 0,            // 0..3 flags on tile
+                        adjacentMines: 0,
+                        biome,
+                        item,
+                        usedPlaster: false,
+                        detonated: false
+                    };
+                }
+
+                getBiomeForCell(x, y) {
+                    const chunkX = Math.floor(x / CONFIG.CHUNK_SIZE);
+                    const chunkY = Math.floor(y / CONFIG.CHUNK_SIZE);
+                    if (seededHash(chunkX, chunkY) > 0.5) return BIOMES.blueberry;
+                    return BIOMES.vanilla;
+                }
+
+                calculateAdjacentMines(x, y) {
+                    let totalMines = 0;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const neighbor = this.getCell(x + dx, y + dy, true);
+                            totalMines += neighbor.mineCount;
+                        }
+                    }
+                    return totalMines;
+                }
+
+                performChord(x, y) {
+                    const cell = this.getCell(x, y);
+                    if (!cell || !cell.isRevealed || cell.adjacentMines === 0) return;
+                    let flaggedNeighbors = 0;
+                    const neighborsToReveal = [];
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const neighbor = this.getCell(x + dx, y + dy, true);
+                            if (neighbor.flagCount > 0) {
+                                flaggedNeighbors += neighbor.flagCount;
+                            } else if (!neighbor.isRevealed) {
+                                neighborsToReveal.push(neighbor);
+                            }
+                        }
+                    }
+                    if (flaggedNeighbors === cell.adjacentMines) {
+                        neighborsToReveal.forEach(n => this.revealCell(n.x, n.y));
+                    }
+                }
+
+                // reveal cell (normal gameplay)
+                revealCell(x, y, { fromLoad=false } = {}) {
+                    const cell = this.getCell(x, y, true);
+                    if (cell.isRevealed || cell.flagCount > 0) return;
+                    if (cell.isMine) {
+                        // if we have plaster, use it automatically
+                        if (this.inventory.bombPlaster > 0) {
+                            this.inventory.bombPlaster--;
+                            this.updateInventoryUI();
+                            cell.isRevealed = true;
+                            cell.usedPlaster = true;
+                            cell.isFlagged = false;
+                            // record to moves map
+                            const key = this._moveKey(x,y);
+                            this.movesMap.set(key, {
+                                x, y,
+                                flagCount: cell.flagCount || 0,
+                                revealed: true,
+                                usedPlaster: true,
+                                detonated: false
+                            });
+                            this.saveState();
+                        } else {
+                            // mark detonated. If from load, don't trigger punishment.
+                            cell.isRevealed = true;
+                            cell.detonated = true;
+                            const key = this._moveKey(x,y);
+                            this.movesMap.set(key, {
+                                x, y,
+                                flagCount: cell.flagCount || 0,
+                                revealed: true,
+                                usedPlaster: false,
+                                detonated: true
+                            });
+                            this.saveState();
+
+                            if (!fromLoad) {
+                                this.triggerPunishment();
+                            }
+                        }
+                        return;
+                    }
+
+                    cell.isRevealed = true;
+                    // Handle items if any
+                    if (cell.item) {
+                        this.inventory[cell.item] = (this.inventory[cell.item] || 0) + 1;
+                        this.updateInventoryUI();
+                        cell.item = null;
+                    }
+
+                    cell.adjacentMines = this.calculateAdjacentMines(x, y);
+
+                    // record reveal in movesMap
+                    const key = this._moveKey(x,y);
+                    const existing = this.movesMap.get(key) || { x, y, flagCount: 0, revealed: false, usedPlaster: false, detonated: false };
+                    existing.revealed = true;
+                    existing.flagCount = cell.flagCount || 0;
+                    this.movesMap.set(key, existing);
+                    this.saveState();
+
+                    // Flood fill zeros
+                    if (cell.adjacentMines === 0) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            for (let dy = -1; dy <= 1; dy++) {
+                                if (dx === 0 && dy === 0) continue;
+                                this.revealCell(x + dx, y + dy);
+                            }
+                        }
+                    }
+                }
+
+                // flag cycling: 0 -> 1 -> 2 -> 3 -> 0
+                flagCell(x, y) {
+                    const cell = this.getCell(x, y, true);
+                    if (cell.isRevealed) return;
+                    const biome = cell.biome;
+                    const prev = cell.flagCount || 0;
+                    const next = (prev + 1) % (biome.flagCount + 1);
+                    console.log(biome.flagCount);
+                    cell.flagCount = next;
+
+                    // Update movesMap optimized final state
+                    const key = this._moveKey(x, y);
+                    const existing = this.movesMap.get(key) || { x, y, flagCount: 0, revealed: false, usedPlaster: false, detonated: false };
+                    existing.flagCount = next;
+                    // if the cell is default and no other flags/reveal, remove map entry to keep it optimized
+                    if (existing.flagCount === 0 && !existing.revealed && !existing.usedPlaster && !existing.detonated) {
+                        this.movesMap.delete(key);
+                    } else {
+                        this.movesMap.set(key, existing);
+                    }
+
+                    // persist
+                    this.saveState();
+                }
+
+                // --- Punishment System ---
+                triggerPunishment(reduction = 0) {
+                    this.isPunished = true;
+                    this.punishmentEndTime = Date.now() + CONFIG.PUNISHMENT_TIME - reduction;
+                    this.gameOverModal.style.display = 'flex';
+                    this.punishmentContainer.style.visibility = 'visible';
+
+                    if (reduction == 0) {
+                        localStorage.setItem(STORAGE_KEY_PUNISHMENT, Date.now());
+                    }
+                }
+
+                updatePunishment() {
+                    if (!this.isPunished) return;
+                    const timeLeft = this.punishmentEndTime - Date.now();
+                    if (timeLeft <= 0) {
+                        this.isPunished = false;
+                        this.gameOverModal.style.display = 'none';
+                        this.punishmentContainer.style.visibility = 'hidden';
+                    } else {
+                        const progress = timeLeft / CONFIG.PUNISHMENT_TIME;
+                        this.punishmentBar.style.width = `${progress * 100}%`;
+                    }
+                }
+
+                // --- UI Update ---
+                updateInventoryUI() {
+                    this.inventoryContainer.innerHTML = '';
+                    for (const [itemName, count] of Object.entries(this.inventory)) {
+                        if (count > 0) {
+                            const itemEl = document.createElement('div');
+                            itemEl.className = 'inventory-item';
+                            if (itemName === 'bombPlaster') {
+                                itemEl.innerHTML = `<span class="item-icon">P</span> x${count}`;
+                                itemEl.title = "Bomb Plaster - Reveals a mine safely.";
+                            } else {
+                                itemEl.innerText = `${itemName}: x${count}`;
+                            }
+                            this.inventoryContainer.appendChild(itemEl);
+                        }
+                    }
+                    if (this.inventoryContainer.innerHTML === '') {
+                        this.inventoryContainer.innerHTML = '<span>Empty</span>';
+                    }
+                }
+
+                // --- Main Loop & Rendering ---
+                gameLoop() {
+                    this.updatePunishment();
+                    this.draw();
+                    requestAnimationFrame(() => this.gameLoop());
+                }
+
+                draw() {
+                    // Clear full canvas in device space
+                    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                    const rect = this.canvas.getBoundingClientRect();
+                    const dpr = window.devicePixelRatio || 1;
+
+                    // apply transform that includes DPI, scale and camera translation
+                    this.ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, -this.camera.x * dpr * this.scale, -this.camera.y * dpr * this.scale);
+
+                    const viewWidth = rect.width / this.scale;
+                    const viewHeight = rect.height / this.scale;
+
+                    const startCol = Math.floor(this.camera.x / CONFIG.CELL_SIZE) - 1;
+                    const endCol = Math.ceil((this.camera.x + viewWidth) / CONFIG.CELL_SIZE) + 1;
+                    const startRow = Math.floor(this.camera.y / CONFIG.CELL_SIZE) - 1;
+                    const endRow = Math.ceil((this.camera.y + viewHeight) / CONFIG.CELL_SIZE) + 1;
+
+                    const symbolFont = `bold ${Math.floor(CONFIG.CELL_SIZE * 0.5)}px 'Press Start 2P', cursive`;
+                    this.ctx.textAlign = 'center';
+                    this.ctx.textBaseline = 'middle';
+
+                    for (let y = startRow; y < endRow; y++) {
+                        for (let x = startCol; x < endCol; x++) {
+                            const cell = this.getCell(x, y, true);
+                            this.drawCell(cell, symbolFont);
+                        }
+                    }
+                }
+
+                drawCell(cell, symbolFont) {
+                    const worldX = cell.x * CONFIG.CELL_SIZE;
+                    const worldY = cell.y * CONFIG.CELL_SIZE;
+
+                    // Base background
+                    this.ctx.fillStyle = cell.biome.backgroundColor;
+                    this.ctx.fillRect(worldX, worldY, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+
+                    const smallFont = symbolFont.replace(/[0-9]+px/g, match => `${Math.round(parseInt(match.slice(0, -2))/2)}px`);
+
+                    if (cell.isRevealed) {
+                        this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                        this.ctx.fillRect(worldX, worldY, CONFIG.CELL_SIZE, CONFIG.CELL_SIZE);
+
+                        if (cell.isMine) {
+                            if (cell.usedPlaster) {
+                                this.ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--plaster-color');
+                                this.ctx.beginPath();
+                                this.ctx.arc(worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2, CONFIG.CELL_SIZE * 0.3, 0, Math.PI * 2);
+                                this.ctx.fill();
+
+                                const col = "#000000"; // black for readability
+                                this.ctx.font = smallFont;
+                                this.ctx.fillStyle = col;
+                                this.ctx.fillText(cell.mineCount, worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2 + 1);
+                                this.ctx.font = symbolFont;
+
+                            } else if (cell.detonated) {
+                                // DETONATED mines are black per request
+                                this.ctx.fillStyle = '#000000';
+                                this.ctx.beginPath();
+                                this.ctx.arc(worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2, CONFIG.CELL_SIZE * 0.3, 0, Math.PI * 2);
+                                this.ctx.fill();
+
+                                const col = "#ffffff"; // white for readability
+                                this.ctx.font = smallFont;
+                                this.ctx.fillStyle = col;
+                                this.ctx.fillText(cell.mineCount, worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2 + 1);
+                                this.ctx.font = symbolFont;
+                            } else {
+                                // other exploded or revealed mines fallback color
+                                this.ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--punishment-bar-fill');
+                                this.ctx.beginPath();
+                                this.ctx.arc(worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2, CONFIG.CELL_SIZE * 0.3, 0, Math.PI * 2);
+                                this.ctx.fill();
+
+                                const col = "#000000"; // black for readability
+                                this.ctx.font = smallFont;
+                                this.ctx.fillStyle = col;
+                                this.ctx.fillText(cell.mineCount, worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2 + 1);
+                                this.ctx.font = symbolFont;
+                            }
+                        } else if (cell.adjacentMines > 0) {
+                            this.ctx.fillStyle = NUMBER_COLORS[cell.adjacentMines] || NUMBER_COLORS[8];
+                            this.ctx.font = symbolFont;
+                            this.ctx.fillText(cell.adjacentMines, worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2 + 2);
+                        }
+
+                    } else { // Not revealed
+                        this.ctx.fillStyle = cell.biome.hiddenColor;
+                        this.ctx.fillRect(worldX, worldY, CONFIG.CELL_SIZE - 1, CONFIG.CELL_SIZE - 1);
+
+                        // Flags: draw number + color
+                        this.ctx.font = symbolFont;
+                        const fc = cell.flagCount || 0;
+                        if (fc > 0) {
+                            const col = FLAG_COLORS[fc] || FLAG_COLORS[1];
+                            this.ctx.fillStyle = col;
+                            // show '?' inside tile (Press Start 2P)
+                            this.ctx.fillText("?", worldX + CONFIG.CELL_SIZE / 2, worldY + CONFIG.CELL_SIZE / 2 + 2);
+                            this.ctx.font = smallFont;
+                            this.ctx.fillText(fc, worldX + CONFIG.CELL_SIZE / 2 + CONFIG.CELL_SIZE - (CONFIG.CELL_SIZE / 3 * 2), worldY + CONFIG.CELL_SIZE / 2 - (CONFIG.CELL_SIZE / 3));
+                        }
+                        // items were intentionally not rendered per your change
+                    }
+                }
+            }
+
+            // --- Initialization ---
+            const canvas = document.getElementById('game-canvas');
+            const game = new Game(canvas, SAVED_MOVES_ENTRIES, STORED_INVENTORY, [x, y], punishmentData);
+            window.game = game;
+
+            // expose a small helper on window for debugging (optional)
+            window.__Creamsweeper = {
+                game,
+                saveState: () => game.saveState(),
+                seed: () => GLOBAL_SEED,
+                clearProgress: () => {
+                    localStorage.removeItem(STORAGE_KEY_MOVES);
+                    localStorage.removeItem(STORAGE_KEY_INVENTORY);
+                    localStorage.removeItem(STORAGE_KEY_LOCATION);
+                    localStorage.removeItem(STORAGE_KEY_SEED);
+                    // keep seed to preserve the map, but you could also remove seed
+                    location.reload();
+                }
+            };
+        });
+    </script>
+</body>
+</html>
