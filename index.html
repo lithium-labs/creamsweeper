@@ -476,7 +476,7 @@
                         }
                     } else {
                         // store camera location after a pan
-                        localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y}`)
+                        localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`)
                     }
 
                     this.isDragging = false;
@@ -515,7 +515,7 @@
                     this.camera.y = worldBefore.y - (screenY / this.scale);
 
                     // persist camera
-                    localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y}`)
+                    localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`)
                 }
 
                 screenToWorld(sx, sy) {
