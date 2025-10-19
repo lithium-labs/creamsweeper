@@ -197,7 +197,7 @@
                 <p>Left Click: Reveal</p>
                 <p>Right Click: Flag</p>
                 <p>Drag: Pan Camera</p>
-                <p>Mouse Wheel: Zoom (cursor-centered)</p>
+                <p>Mouse Wheel: Zoom</p>
             </div>
 
             <div id="inventory-panel" class="ui-panel">
@@ -242,12 +242,13 @@
             }
 
             const storedCamLocation = localStorage.getItem(STORAGE_KEY_LOCATION)
-            let [x, y] = [0, 0];
+            let [x, y, z] = [0, 0, 1];
 
             if (storedCamLocation) {
-                const [storedX, storedY] = storedCamLocation.split(",")
-                x = parseFloat(storedX)
-                y = parseFloat(storedY)
+                const [storedX, storedY, storedZ] = storedCamLocation.split(",");
+                x = parseFloat(storedX);
+                y = parseFloat(storedY);
+                z = storedZ ? parseFloat(storedZ) : 1;
             }
 
             const punishmentStart = localStorage.getItem(STORAGE_KEY_PUNISHMENT) || 0;
@@ -347,7 +348,7 @@
 
             // --- Game Class ---
             class Game {
-                constructor(canvas, savedMovesEntries = [], storedInventory = null, camera = [0, 0], punishmentData) {
+                constructor(canvas, savedMovesEntries = [], storedInventory = null, camera = [0, 0, 1], punishmentData) {
                     this.canvas = canvas;
                     this.ctx = canvas.getContext('2d');
 
@@ -368,7 +369,7 @@
                     this.punishmentData = punishmentData;
 
                     // Zoom & camera
-                    this.scale = 1; // 1 = 100%
+                    this.scale = camera[2]; // 1 = 100%
                     this.minScale = 0.5;
                     this.maxScale = 3;
 
@@ -930,7 +931,7 @@
 
             // --- Initialization ---
             const canvas = document.getElementById('game-canvas');
-            const game = new Game(canvas, SAVED_MOVES_ENTRIES, STORED_INVENTORY, [x, y], punishmentData);
+            const game = new Game(canvas, SAVED_MOVES_ENTRIES, STORED_INVENTORY, [x, y, z], punishmentData);
             window.game = game;
 
             // expose a small helper on window for debugging (optional)
