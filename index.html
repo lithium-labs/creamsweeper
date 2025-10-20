@@ -572,12 +572,12 @@
                 }
 
                 onMouseUp(e) {
+                    if (!window.matchMedia('(hover: hover)').matches) return;
                     if (this.isPunished) return;
 
                     const tool = getTool();
                     const movedDistance = Math.hypot(e.clientX - this.dragStartPos.x, e.clientY - this.dragStartPos.y);
 
-                    // RIGHT CLICK behavior (desktop): flag unless tool === 'drag'
                     if (e.button === 2) {
                         if (tool !== 'drag') {
                             const worldPos = this.screenToWorld(e.clientX, e.clientY);
@@ -589,7 +589,6 @@
                         }
                     }
 
-                    // Treat small movements as a tap/click action
                     if (movedDistance < 6) {
                         const worldPos = this.screenToWorld(e.clientX, e.clientY);
                         const cellCoords = {
@@ -597,7 +596,7 @@
                             y: Math.floor(worldPos.y / CONFIG.CELL_SIZE),
                         };
 
-                        if (e.button === 0) { // LEFT CLICK
+                        if (e.button === 0) {
                             if (tool === 'flag') {
                                 this.flagCell(cellCoords.x, cellCoords.y);
                             } else if (tool === 'reveal' || tool === null) {
@@ -608,11 +607,10 @@
                                     this.revealCell(cellCoords.x, cellCoords.y);
                                 }
                             } else if (tool === 'drag') {
-                                // drag tool: do NOT reveal or flag on click
+
                             }
                         }
                     } else {
-                        // It was a drag movement — save camera location
                         localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`);
                     }
 
@@ -758,7 +756,7 @@
                                 this.revealCell(cellCoords.x, cellCoords.y);
                             }
                         } else if (tool === 'drag') {
-                            
+
                         }
                     } else {
                         localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`);
