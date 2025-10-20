@@ -80,6 +80,7 @@
             left: 0;
             width: 100%;
             height: 100%;
+            touch-action: none;
         }
         
         /* --- Punishment Bar --- */
@@ -148,7 +149,7 @@
             bottom: 20px;
             left: 20px;
             line-height: 1.6;
-            height: 3vw;
+            height: auto;
             display: flex;
             gap: 20px;
             pointer-events: none;
@@ -172,6 +173,7 @@
             background-color: #00ff0020;
             aspect-ratio: 1 / 1;
             height: 90%;
+            min-height: 50px;
             background-size: 90% 90%;
             cursor: pointer;
             background-position: center;
@@ -488,6 +490,14 @@
                     this.minScale = 0.3;
                     this.maxScale = 8;
 
+                    this.pinch = {
+                        active: false,
+                        startDist: 0,
+                        startScale: this.scale,
+                        startCamera: { x: 0, y: 0 },
+                        worldMid: { x: 0, y: 0 }
+                    }
+
                     this.initialize();
                 }
 
@@ -647,6 +657,28 @@
                     if (this.isPunished) return;
                     if (!e.touches || e.touches.length === 0) return;
 
+                    if (e.touches.length >= 2) {
+                        e.preventDefault();
+                        const dist = this.getTouchDistance(e.touches);
+                        const mid = this.getTouchMidpoint(e.touches);
+                        const rect = this.canvas.getBoundingClientRect();
+
+                        this.pinch.active = true;
+                        this.pinch.startDist = dist;
+                        this.pinch.startScale = this.scale;
+                        this.pinch.startCamera = { x: this.camera.x, y: this.camera.y };
+
+                        this.pinch.worldMid = {
+                            x: (mid.x - rect.left) / this.scale + this.camera.x,
+                            y: (mid.y - rect.top) / this.scale + this.camera.y
+                        };
+
+                        // cancel any single-touch drag while pinching
+                        this.isDragging = false;
+                        this.canvas.style.cursor = 'grabbing';
+                        return;
+                    }
+
                     const t = e.touches[0];
                     this.lastMousePos = { x: t.clientX, y: t.clientY };
                     this.dragStartPos = { x: t.clientX, y: t.clientY };
@@ -663,9 +695,24 @@
                     if (this.isPunished) return;
                     if (!e.touches || e.touches.length === 0) return;
 
+                    if (e.touches.length >= 2 && this.pinch.active) {
+                        e.preventDefault();
+                        const dist = this.getTouchDistance(e.touches);
+                        const mid = this.getTouchMidpoint(e.touches);
+                        const rect = this.canvas.getBoundingClientRect();
+
+                        let newScale = this.pinch.startScale * (dist / this.pinch.startDist);
+                        newScale = Math.max(this.minScale, Math.min(this.maxScale, newScale));
+
+                        this.scale = newScale;
+                        this.camera.x = this.pinch.worldMid.x - ((mid.x - rect.left) / this.scale);
+                        this.camera.y = this.pinch.worldMid.y - ((mid.y - rect.top) / this.scale);
+
+                        return;
+                    }
+
                     const t = e.touches[0];
                     const tool = getTool();
-
                     if (this.isDragging) {
                         e.preventDefault();
                         const dx = t.clientX - this.lastMousePos.x;
@@ -673,13 +720,21 @@
                         this.camera.x -= dx / this.scale;
                         this.camera.y -= dy / this.scale;
                         this.lastMousePos = { x: t.clientX, y: t.clientY };
-                    } else {
-                        // not in drag mode — allow user to move finger without panning (no effect)
                     }
                 }
 
                 onTouchEnd(e) {
                     if (this.isPunished) return;
+
+                    if (this.pinch.active && (!e.touches || e.touches.length < 2)) {
+                        this.pinch.active = false;
+
+                        localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`);
+                        this.canvas.style.cursor = 'grab';
+
+                        this.isDragging = false;
+                        return;
+                    }
 
                     const endX = this.lastMousePos.x;
                     const endY = this.lastMousePos.y;
@@ -703,7 +758,7 @@
                                 this.revealCell(cellCoords.x, cellCoords.y);
                             }
                         } else if (tool === 'drag') {
-
+                            
                         }
                     } else {
                         localStorage.setItem(STORAGE_KEY_LOCATION, `${this.camera.x},${this.camera.y},${this.scale}`);
@@ -718,6 +773,19 @@
                     return {
                         x: (sx - rect.left) / this.scale + this.camera.x,
                         y: (sy - rect.top) / this.scale + this.camera.y,
+                    };
+                }
+
+                getTouchDistance(touches) {
+                    const dx = touches[0].clientX - touches[1].clientX;
+                    const dy = touches[0].clientY - touches[1].clientY;
+                    return Math.hypot(dx, dy);
+                }
+
+                getTouchMidpoint(touches) {
+                    return {
+                        x: (touches[0].clientX + touches[1].clientX) / 2,
+                        y: (touches[0].clientY + touches[1].clientY) / 2
                     };
                 }
 
